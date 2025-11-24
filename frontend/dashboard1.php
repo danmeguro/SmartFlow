@@ -172,7 +172,7 @@
 
   <div class="dashboard-container">
     <header>
-      <button class="back-btn" onclick="window.location.href='http://localhost/meusucos/telaPDASH.php'">←</button>
+      <button class="back-btn" onclick="window.location.href='http://localhost/SmartFlow/frontend/telaPDASH.php'">←</button>
 
       <h1>Dashboard</h1>
     </header>
