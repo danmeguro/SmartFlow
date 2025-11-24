@@ -112,7 +112,7 @@
         <h2>Bem-vindo(a)</h2>
 
         <!-- Botão de login comum -->
-        <form action="http://localhost/meusucos/menu_suco.php" method="POST">
+        <form action="http://localhost/SmartFlow/frontend/menu_suco.php" method="POST">
             <div class="input-group">
                 <label for="email">E-mail</label>
                 <input type="email" id="email" name="email" placeholder="Digite seu e-mail" required>
@@ -125,7 +125,7 @@
         </form>
 
         <!-- Link do ADM -->
-        <a href="http://localhost/meusucos/telaPDASH.php" class="adm-link">Entrar como ADM</a>
+        <a href="http://localhost/SmartFlow/frontend/telaPDASH.php" class="adm-link">Entrar como ADM</a>
     </div>
 
 </body>
