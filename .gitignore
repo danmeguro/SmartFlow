@@ -399,3 +399,23 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+
+# Arquivos de Machine Learning e Modelos Grandes
+*.h5
+*.onnx
+
+# Ambientes Virtuais Python (já resolvido antes, mas vale conferir)
+.venv/
+venv/
+__pycache__/
+
+# Dependências do PHP (se você usa Composer)
+/vendor/
+
+# Dependências do JavaScript/Frontend
+/node_modules/
+
+# Logs e Arquivos de Build
+*.log
+/dist/
+/build/
