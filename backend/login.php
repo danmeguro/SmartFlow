@@ -3,11 +3,11 @@
 session_start();
 require_once 'conexao.php';
 
-// Define URL de falha padrão
+// Se falhar, volta para a tela de login na pasta view
 $url_falha = 'view/index.php?erro=1';
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
-    $email = $_POST['email'] ?? '';
+    $email = $conn->real_escape_string($_POST['email'] ?? '');
     $senha = $_POST['password'] ?? ''; 
 
     // --- 1. VERIFICAÇÃO LOCAL (HARDCODED) ---
@@ -16,10 +16,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     // Caso: Cliente Teste
     if ($email === 'cliente@smartflow.com' && $senha === 'cliente123') {
         $_SESSION['loggedin'] = true;
-        $_SESSION['id'] = 1; // ID fictício
+        $_SESSION['id'] = 1;
         $_SESSION['email'] = $email;
         $_SESSION['papel'] = 'cliente';
-        
         header("location: view/menu_suco.php");
         exit;
     }
@@ -27,29 +26,27 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     // Caso: Admin Teste
     if ($email === 'admin@smartflow.com' && $senha === 'admin123') {
         $_SESSION['loggedin'] = true;
-        $_SESSION['id'] = 2; // ID fictício
+        $_SESSION['id'] = 2;
         $_SESSION['email'] = $email;
         $_SESSION['papel'] = 'administrador';
         
-        header("location: view/telaPDASH.php");
+        // MUDANÇA AQUI: Vai para o Menu Intermediário
+        header("location: view/home_admin.php");
         exit;
     }
 
-    // --- 2. VERIFICAÇÃO NO BANCO DE DADOS (FALLBACK) ---
-    // Se não for um dos usuários de teste acima, tenta buscar no banco
-    $email_db = $conn->real_escape_string($email);
-    
+    // --- 2. VERIFICAÇÃO NO BANCO DE DADOS ---
     $sql = "SELECT id, email, senha_hash, papel FROM usuarios WHERE email = ?";
     
     if ($stmt = $conn->prepare($sql)) {
-        $stmt->bind_param("s", $email_db);
+        $stmt->bind_param("s", $email);
         $stmt->execute();
         $res = $stmt->get_result();
 
         if ($res->num_rows === 1) {
             $user = $res->fetch_assoc();
             
-            // Verifica senha (suporta tanto Hash quanto Texto Puro para compatibilidade)
+            // Aceita Hash ou Texto Puro
             if (password_verify($senha, $user['senha_hash']) || $senha === $user['senha_hash']) {
                 $_SESSION['loggedin'] = true;
                 $_SESSION['id'] = $user['id'];
@@ -57,7 +54,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 $_SESSION['papel'] = $user['papel'];
                 
                 if ($user['papel'] === 'administrador') {
-                    header("location: view/telaPDASH.php"); 
+                    // MUDANÇA AQUI TAMBÉM
+                    header("location: view/home_admin.php"); 
                 } else {
                     header("location: view/menu_suco.php"); 
                 }
@@ -72,8 +70,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     }
     $conn->close();
 }
-
-// Se chegou aqui, falhou
 header("location: " . $url_falha);
 exit;
 ?>
