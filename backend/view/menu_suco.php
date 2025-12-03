@@ -1,7 +1,5 @@
 <?php
-// SmartFlow/backend/view/menu_suco.php
 session_start();
-
 // Proteção: Se não estiver logado, volta pro login
 if (!isset($_SESSION['loggedin'])) {
     header("location: index.php");
@@ -142,6 +140,7 @@ if (!isset($_SESSION['loggedin'])) {
         font-size: 16px;
     }
 
+    /* Feedback visual */
     .feedback-message { margin-top: 15px; padding: 10px; border-radius: 8px; font-weight: bold; display: none; }
     .success { background-color: #d4edda; color: #155724; }
     .error { background-color: #f8d7da; color: #721c24; }
@@ -157,10 +156,10 @@ if (!isset($_SESSION['loggedin'])) {
 
     <div class="suco-container">
       
-      <!-- Card LARANJA (Imagem Local) -->
+      <!-- Card LARANJA -->
       <div class="suco-card">
-        <!-- Certifique-se de salvar a imagem como img/laranja.jpg -->
-        <img src="img/laranja.jpg" alt="Laranja" onerror="this.src='https://via.placeholder.com/100?text=Laranja'">
+        <!-- Imagem Local -->
+        <img src="img/laranja.jpg" alt="Laranja" onerror="this.src='https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSxMGsVTFjjXXAnydIjHsqiM7acSEOraTPysw&s'">
         <h3>Laranja</h3>
         <div class="quantidade-container">
             <button onclick="alt('Laranja', -1)">−</button>
@@ -169,10 +168,10 @@ if (!isset($_SESSION['loggedin'])) {
         </div>
       </div>
 
-      <!-- Card UVA (Imagem Local) -->
+      <!-- Card UVA -->
       <div class="suco-card">
-        <!-- Certifique-se de salvar a imagem como img/uva.jpg -->
-        <img src="img/uva.jpg" alt="Uva" onerror="this.src='https://via.placeholder.com/100?text=Uva'">
+        <!-- Imagem Local -->
+        <img src="img/uva.jpg" alt="Uva" onerror="this.src='https://media.istockphoto.com/id/2161126958/vector/2107_grape_purple.jpg?s=612x612&w=0&k=20&c=BgTjkoGeaHuMxomQeZM45VRvJxjB4xbyzRRiUWKOCBA='">
         <h3>Uva</h3>
         <div class="quantidade-container">
             <button onclick="alt('Uva', -1)">−</button>
@@ -208,6 +207,7 @@ if (!isset($_SESSION['loggedin'])) {
 
     function atualizar() {
         const itens = Object.entries(pedido).filter(([_, q]) => q > 0);
+        
         if (itens.length === 0) {
             document.getElementById('listaPedido').innerHTML = "Nenhum suco selecionado";
         } else {
@@ -217,28 +217,48 @@ if (!isset($_SESSION['loggedin'])) {
 
     async function finalizar(btn) {
         const nome = document.getElementById('nomeGarrafa').value.trim();
-        const itens = Object.entries(pedido).filter(([_, q]) => q > 0).map(([s, q]) => ({sabor: s, quantidade: q}));
         
-        if (!itens.length) return feedback('Selecione pelo menos um suco', 'error');
+        // Cria um array com os itens que têm quantidade > 0
+        const itensParaEnviar = Object.entries(pedido)
+            .filter(([sabor, quantidade]) => quantidade > 0)
+            .map(([sabor, quantidade]) => ({ sabor: sabor, quantidade: quantidade }));
         
+        // Validação no frontend
+        if (itensParaEnviar.length === 0) {
+            return feedback('Selecione pelo menos um suco!', 'error');
+        }
+        
+        // Bloqueia botão para evitar duplo clique
         btn.disabled = true; 
         btn.textContent = 'Enviando...';
         
         try {
+            // Envia para o backend (AJAX)
+            // Note o caminho '../salvar_pedido.php' pois estamos em view/
             const res = await fetch('../salvar_pedido.php', {
                 method: 'POST', 
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({nome: nome || 'Sem Nome', itens: itens})
+                body: JSON.stringify({
+                    nome: nome, 
+                    itens: itensParaEnviar
+                })
             });
             
-            const json = await res.json();
+            // Tenta ler a resposta como JSON
+            const textResponse = await res.text(); // Pega texto primeiro para debug se precisar
+            try {
+                var json = JSON.parse(textResponse);
+            } catch (e) {
+                throw new Error("Erro ao ler JSON: " + textResponse);
+            }
             
             if (json.success) {
-                feedback('✅ Pedido Enviado com Sucesso!', 'success');
+                feedback('✅ Pedido #' + json.pedido_id + ' enviado com sucesso!', 'success');
+                
+                // Reseta tudo após 2 segundos
                 setTimeout(() => {
-                    alert("Pedido #" + json.pedido_id + " registrado!");
                     location.reload(); 
-                }, 1500);
+                }, 2000);
             } else {
                 feedback('Erro: ' + json.message, 'error');
                 btn.disabled = false;
@@ -246,7 +266,7 @@ if (!isset($_SESSION['loggedin'])) {
             }
         } catch (e) {
             console.error(e);
-            feedback('Erro de conexão com o servidor', 'error');
+            feedback('Erro de conexão: Verifique o console.', 'error');
             btn.disabled = false;
             btn.textContent = 'Finalizar Pedido';
         }
