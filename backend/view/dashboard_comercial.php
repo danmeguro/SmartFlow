@@ -8,11 +8,10 @@ if (!isset($_SESSION['loggedin']) || $_SESSION['papel'] !== 'administrador') {
 
 require_once '../conexao.php';
 
-// --- LÓGICA DE ATUALIZAÇÃO DE PREÇO ---
+// --- LÓGICA DE ATUALIZAÇÃO DE PREÇO (POST) ---
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['novo_preco'])) {
     $novo_preco = floatval(str_replace(',', '.', $_POST['novo_preco']));
     if ($novo_preco > 0) {
-        // Usa INSERT ON DUPLICATE KEY UPDATE para garantir que a linha de configuração existe
         $stmt = $conn->prepare("INSERT INTO configuracoes (chave, valor) VALUES ('preco_suco', ?) ON DUPLICATE KEY UPDATE valor = VALUES(valor)");
         $valor_str = number_format($novo_preco, 2, '.', '');
         $stmt->bind_param("s", $valor_str);
@@ -23,13 +22,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['novo_preco'])) {
 }
 
 // --- BUSCA PREÇO ATUAL ---
-// ATENÇÃO: Se a tabela não existir, a query irá falhar.
 $sql_conf = "SELECT valor FROM configuracoes WHERE chave = 'preco_suco'";
 $res_conf = $conn->query($sql_conf);
-// Se não achar no banco, usa 10.00 como fallback
 $preco_suco = ($res_conf && $res_conf->num_rows > 0) ? floatval($res_conf->fetch_assoc()['valor']) : 10.00;
 
-// --- CÁLCULOS PRINCIPAIS ---
+// --- CÁLCULOS PRINCIPAIS (KPIs) ---
 $sql_vendas = "SELECT SUM(quantidade) as total_sucos FROM itens_pedido";
 $res_vendas = $conn->query($sql_vendas);
 $total_sucos = $res_vendas->fetch_assoc()['total_sucos'] ?? 0;
@@ -41,12 +38,59 @@ $ticket_medio = ($total_pedidos > 0) ? ($faturamento_total / $total_pedidos) : 0
 
 $sql_ranking = "SELECT sabor, SUM(quantidade) as qtd FROM itens_pedido GROUP BY sabor ORDER BY qtd DESC";
 $res_ranking = $conn->query($sql_ranking);
+
+// --- LÓGICA DE GERAÇÃO DE DADOS PARA GRÁFICO (15 dias) ---
+$dias_analise = 15; 
+$datas_grafico_qtd = [];
+$datas_grafico_rec = [];
+$data_hoje = new DateTime();
+
+for ($i = $dias_analise - 1; $i >= 0; $i--) {
+    $data = (new DateTime())->sub(new DateInterval("P{$i}D"));
+    $datas_grafico_qtd[$data->format('Y-m-d')] = 0; 
+    $datas_grafico_rec[$data->format('Y-m-d')] = 0; 
+}
+
+$data_limite = (new DateTime())->sub(new DateInterval("P{$dias_analise}D"))->format('Y-m-d');
+$sql_grafico = "
+    SELECT 
+        DATE(p.data_pedido) as dia, 
+        SUM(i.quantidade) as sucos_vendidos,
+        SUM(i.quantidade * {$preco_suco}) as receita
+    FROM pedidos p
+    JOIN itens_pedido i ON p.id = i.pedido_id
+    WHERE p.data_pedido >= '{$data_limite}'
+    GROUP BY dia
+    ORDER BY dia ASC
+";
+$res_grafico = $conn->query($sql_grafico);
+
+if ($res_grafico) {
+    while ($row = $res_grafico->fetch_assoc()) {
+        $data_sql = $row['dia'];
+        if (isset($datas_grafico_qtd[$data_sql])) {
+            $datas_grafico_qtd[$data_sql] = intval($row['sucos_vendidos']);
+            $datas_grafico_rec[$data_sql] = floatval($row['receita']);
+        }
+    }
+}
+
+// Formatação para JSON do JavaScript
+$dados_js_qtd = [['Dia', 'Sucos Vendidos']];
+foreach ($datas_grafico_qtd as $dia_full => $qtd) { $dados_js_qtd[] = [(new DateTime($dia_full))->format('d/m'), $qtd]; }
+$json_grafico_qtd = json_encode($dados_js_qtd);
+
+$dados_js_rec = [['Dia', 'Faturamento (R$)']];
+foreach ($datas_grafico_rec as $dia_full => $rec) { $dados_js_rec[] = [(new DateTime($dia_full))->format('d/m'), $rec]; }
+$json_grafico_rec = json_encode($dados_js_rec);
 ?>
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
   <meta charset="UTF-8">
   <title>Dashboard Comercial</title>
+  <!-- Inclui a biblioteca do Google Charts -->
+  <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Poppins", sans-serif; }
     body { background: linear-gradient(135deg, #CDAFFA, #E7D4FF); min-height: 100vh; padding: 20px; }
@@ -59,28 +103,98 @@ $res_ranking = $conn->query($sql_ranking);
 
     /* GRIDS */
     .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 40px; }
-    
     .card-kpi { background: #F7F4FF; padding: 25px; border-radius: 15px; text-align: center; border-bottom: 5px solid #CDAFFA; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
     .card-kpi h3 { color: #666; font-size: 14px; text-transform: uppercase; margin-bottom: 10px; }
     .card-kpi .valor { font-size: 32px; font-weight: bold; color: #4A2D9C; }
-    .card-kpi .sub { font-size: 12px; color: #999; }
-
-    /* FORMULÁRIO DE PREÇO */
+    
     .config-section { background: #fff3cd; padding: 15px; border-radius: 10px; margin-bottom: 30px; border: 1px solid #ffeeba; display: flex; justify-content: space-between; align-items: center; }
     .config-form { display: flex; gap: 10px; align-items: center; }
     .config-form input { padding: 8px; border-radius: 5px; border: 1px solid #ccc; width: 100px; }
     .btn-salvar { background: #4A2D9C; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
     
+    /* GRÁFICO E RANKING */
+    .grafico-card { 
+        background: #F7F4FF; 
+        padding: 20px; 
+        border-radius: 15px; 
+        margin-bottom: 30px;
+    }
+    #chart_div, #chart_receita { height: 350px; } /* Altura padrão para os gráficos */
+
+    /* CONTROLE DE EXIBIÇÃO */
+    .chart-controls { margin-bottom: 20px; display: flex; align-items: center; gap: 15px; }
+    .chart-controls label { font-weight: bold; color: #5E3B76; }
+    .chart-controls select { padding: 8px; border-radius: 5px; border: 1px solid #CDAFFA; }
+
     /* TABELA RANKING */
-    .ranking-section h2 { color: #5E3B76; margin-bottom: 15px; font-size: 18px; }
+    .ranking-section { margin-top: 30px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
     th { background: #f9f9f9; color: #5E3B76; }
-    
     .barra-container { width: 100%; background: #eee; height: 8px; border-radius: 4px; margin-top: 5px; }
     .barra-fill { height: 100%; background: #CDAFFA; border-radius: 4px; }
 
   </style>
+
+  <!-- Lógica do Gráfico em JavaScript -->
+  <script type="text/javascript">
+    google.charts.load('current', {'packages':['corechart']});
+    google.charts.setOnLoadCallback(initializeChartDisplay); // Chamada inicial
+
+    // Variáveis globais para os dados
+    const JSON_VENDAS = <?php echo $json_grafico_qtd; ?>;
+    const JSON_RECEITA = <?php echo $json_grafico_rec; ?>;
+
+    function initializeChartDisplay() {
+        // Inicializa o primeiro gráfico (Vendas)
+        drawChart(JSON_VENDAS, 'chart_div', 'Sucos Vendidos', 'Qtd. Sucos', '#9661D2');
+        
+        // Esconde o gráfico de Receita no início
+        document.getElementById('chart_receita_container').style.display = 'none';
+    }
+    
+    function drawChart(jsonData, elementId, title, vAxisTitle, color) {
+      var data = google.visualization.arrayToDataTable(jsonData);
+
+      var options = {
+        title: title,
+        areaOpacity: 0.2, 
+        lineWidth: 3, 
+        pointSize: 5,
+        legend: { position: 'bottom' },
+        colors: [color],
+        hAxis: { title: 'Data', titleTextStyle: { color: '#333' } },
+        vAxis: { title: vAxisTitle, minValue: 0, format: '0' }
+      };
+      
+      if (vAxisTitle === 'Receita (R$)') {
+         options.vAxis.format = 'currency';
+      }
+
+      var chart = new google.visualization.LineChart(document.getElementById(elementId));
+      chart.draw(data, options);
+    }
+
+    function toggleChart() {
+        const selector = document.getElementById('chartSelector');
+        const chartType = selector.value;
+        
+        const vendasContainer = document.getElementById('chart_vendas_container');
+        const receitaContainer = document.getElementById('chart_receita_container');
+        
+        if (chartType === 'quantidade') {
+            vendasContainer.style.display = 'block';
+            receitaContainer.style.display = 'none';
+        } else if (chartType === 'receita') {
+            vendasContainer.style.display = 'none';
+            receitaContainer.style.display = 'block';
+            
+            // Desenha o gráfico de receita se estiver sendo mostrado (para garantir que renderize)
+            // Chamamos a função de desenho fora do initialize para evitar sobrecarga no carregamento
+            drawChart(JSON_RECEITA, 'chart_receita', 'Faturamento Bruto', 'Receita (R$)', '#32CD32');
+        }
+    }
+  </script>
 </head>
 <body>
   <div class="container">
@@ -96,7 +210,6 @@ $res_ranking = $conn->query($sql_ranking);
             <?php if(isset($msg_sucesso)) echo "<span style='color:green; margin-left:10px;'>$msg_sucesso</span>"; ?>
         </div>
         <form method="POST" class="config-form">
-            <!-- Coloca o valor atual no input para facilitar a edição -->
             <input type="number" name="novo_preco" step="0.01" min="0.01" value="<?php echo number_format($preco_suco, 2, '.', ''); ?>" required>
             <button type="submit" class="btn-salvar">Alterar</button>
         </form>
@@ -107,25 +220,45 @@ $res_ranking = $conn->query($sql_ranking);
         <div class="card-kpi">
             <h3>Faturamento Total</h3>
             <div class="valor">R$ <?php echo number_format($faturamento_total, 2, ',', '.'); ?></div>
-            <p class="sub">Baseado no preço atual</p>
         </div>
 
         <div class="card-kpi">
             <h3>Sucos Vendidos</h3>
             <div class="valor"><?php echo $total_sucos; ?></div>
-            <p class="sub">Unidades totais</p>
         </div>
 
         <div class="card-kpi">
             <h3>Total de Pedidos</h3>
             <div class="valor"><?php echo $total_pedidos; ?></div>
-            <p class="sub">Clientes atendidos</p>
         </div>
 
         <div class="card-kpi">
             <h3>Ticket Médio</h3>
             <div class="valor">R$ <?php echo number_format($ticket_medio, 2, ',', '.'); ?></div>
-            <p class="sub">Média por pedido</p>
+        </div>
+    </div>
+    
+    <!-- CARD DE GRÁFICOS E CONTROLE -->
+    <div class="grafico-card">
+        <h2>Análise de Tendência</h2>
+
+        <!-- CONTROLE DROPDOWN -->
+        <div class="chart-controls">
+            <label for="chartSelector">Visualizar:</label>
+            <select id="chartSelector" onchange="toggleChart()">
+                <option value="quantidade">Vendas (Quantidade)</option>
+                <option value="receita">Receita (Faturamento)</option>
+            </select>
+        </div>
+
+        <!-- Container 1: Vendas por Quantidade (Inicialmente visível) -->
+        <div id="chart_vendas_container">
+            <div id="chart_div"></div>
+        </div>
+        
+        <!-- Container 2: Vendas por Receita (Inicialmente oculto) -->
+        <div id="chart_receita_container">
+            <div id="chart_receita"></div>
         </div>
     </div>
 
@@ -147,13 +280,11 @@ $res_ranking = $conn->query($sql_ranking);
                     $primeiro = true;
                     $max_val = 1;
                     
-                    // 1. Coleta e encontra o valor máximo para a barra de popularidade
                     while($r = $res_ranking->fetch_assoc()) {
                         $dados_ranking[] = $r;
                         if ($primeiro) { $max_val = $r['qtd']; $primeiro = false; }
                     }
 
-                    // 2. Itera e exibe os dados
                     foreach($dados_ranking as $row):
                         $porcentagem = ($row['qtd'] / $max_val) * 100;
                 ?>
