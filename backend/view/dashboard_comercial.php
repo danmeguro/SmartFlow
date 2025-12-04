@@ -8,7 +8,7 @@ if (!isset($_SESSION['loggedin']) || $_SESSION['papel'] !== 'administrador') {
 
 require_once '../conexao.php';
 
-// --- LÓGICA DE ATUALIZAÇÃO DE PREÇO (POST) ---
+// --- CONFIGURAÇÃO DE PREÇOS (Simulação) ---
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['novo_preco'])) {
     $novo_preco = floatval(str_replace(',', '.', $_POST['novo_preco']));
     if ($novo_preco > 0) {
@@ -26,32 +26,63 @@ $sql_conf = "SELECT valor FROM configuracoes WHERE chave = 'preco_suco'";
 $res_conf = $conn->query($sql_conf);
 $preco_suco = ($res_conf && $res_conf->num_rows > 0) ? floatval($res_conf->fetch_assoc()['valor']) : 10.00;
 
-// --- CÁLCULOS PRINCIPAIS (KPIs) ---
-$sql_vendas = "SELECT SUM(quantidade) as total_sucos FROM itens_pedido";
-$res_vendas = $conn->query($sql_vendas);
-$total_sucos = $res_vendas->fetch_assoc()['total_sucos'] ?? 0;
-$faturamento_total = $total_sucos * $preco_suco;
+// --- 1. LÓGICA DO FILTRO DE DATAS ---
+// Pega as datas do GET ou define um período padrão (últimos 15 dias)
+$data_inicio_str = $_GET['data_inicio'] ?? (new DateTime())->sub(new DateInterval("P14D"))->format('Y-m-d');
+$data_fim_str = $_GET['data_fim'] ?? (new DateTime())->format('Y-m-d');
 
-$sql_pedidos = "SELECT COUNT(*) as total FROM pedidos";
-$total_pedidos = $conn->query($sql_pedidos)->fetch_assoc()['total'] ?? 0;
+// Validação básica e formatação de objetos DateTime
+try {
+    $data_inicio = new DateTime($data_inicio_str);
+    $data_fim = new DateTime($data_fim_str);
+    if ($data_inicio > $data_fim) {
+        $data_inicio = new DateTime($data_fim_str); // Garante que inicio não seja maior que fim
+    }
+} catch (Exception $e) {
+    // Fallback em caso de datas inválidas
+    $data_inicio = (new DateTime())->sub(new DateInterval("P14D"));
+    $data_fim = new DateTime();
+}
+$data_inicio_sql = $data_inicio->format('Y-m-d');
+$data_fim_sql = $data_fim->format('Y-m-d');
+
+
+// --- CÁLCULOS PRINCIPAIS (KPIs - Afetados pela data) ---
+// Calcula o faturamento e quantidade apenas no período selecionado
+$sql_vendas_periodo = "
+    SELECT 
+        SUM(i.quantidade) as total_sucos, 
+        SUM(i.quantidade * {$preco_suco}) as faturamento_total,
+        COUNT(DISTINCT p.id) as total_pedidos
+    FROM pedidos p
+    JOIN itens_pedido i ON p.id = i.pedido_id
+    WHERE DATE(p.data_pedido) BETWEEN '{$data_inicio_sql}' AND '{$data_fim_sql}'
+";
+$res_kpi = $conn->query($sql_vendas_periodo)->fetch_assoc();
+
+$total_sucos = $res_kpi['total_sucos'] ?? 0;
+$faturamento_total = $res_kpi['faturamento_total'] ?? 0;
+$total_pedidos = $res_kpi['total_pedidos'] ?? 0;
 $ticket_medio = ($total_pedidos > 0) ? ($faturamento_total / $total_pedidos) : 0;
 
 $sql_ranking = "SELECT sabor, SUM(quantidade) as qtd FROM itens_pedido GROUP BY sabor ORDER BY qtd DESC";
 $res_ranking = $conn->query($sql_ranking);
 
-// --- LÓGICA DE GERAÇÃO DE DADOS PARA GRÁFICO (15 dias) ---
-$dias_analise = 15; 
+// --- 2. LÓGICA DE GERAÇÃO DE DADOS PARA GRÁFICO ---
 $datas_grafico_qtd = [];
 $datas_grafico_rec = [];
-$data_hoje = new DateTime();
 
-for ($i = $dias_analise - 1; $i >= 0; $i--) {
-    $data = (new DateTime())->sub(new DateInterval("P{$i}D"));
+// A. Gerar Array de Datas para o período selecionado (Gap Filling)
+$interval = new DateInterval('P1D');
+$periodo = new DatePeriod($data_inicio, $interval, $data_fim->modify('+1 day'));
+$data_fim->modify('-1 day'); // Volta para o dia final correto
+
+foreach ($periodo as $data) {
     $datas_grafico_qtd[$data->format('Y-m-d')] = 0; 
     $datas_grafico_rec[$data->format('Y-m-d')] = 0; 
 }
 
-$data_limite = (new DateTime())->sub(new DateInterval("P{$dias_analise}D"))->format('Y-m-d');
+// B. Consulta SQL para buscar vendas por dia
 $sql_grafico = "
     SELECT 
         DATE(p.data_pedido) as dia, 
@@ -59,12 +90,13 @@ $sql_grafico = "
         SUM(i.quantidade * {$preco_suco}) as receita
     FROM pedidos p
     JOIN itens_pedido i ON p.id = i.pedido_id
-    WHERE p.data_pedido >= '{$data_limite}'
+    WHERE DATE(p.data_pedido) BETWEEN '{$data_inicio_sql}' AND '{$data_fim_sql}'
     GROUP BY dia
     ORDER BY dia ASC
 ";
 $res_grafico = $conn->query($sql_grafico);
 
+// C. Popular os Arrays de Datas
 if ($res_grafico) {
     while ($row = $res_grafico->fetch_assoc()) {
         $data_sql = $row['dia'];
@@ -75,7 +107,7 @@ if ($res_grafico) {
     }
 }
 
-// Formatação para JSON do JavaScript
+// D. Formatação para JSON/JavaScript
 $dados_js_qtd = [['Dia', 'Sucos Vendidos']];
 foreach ($datas_grafico_qtd as $dia_full => $qtd) { $dados_js_qtd[] = [(new DateTime($dia_full))->format('d/m'), $qtd]; }
 $json_grafico_qtd = json_encode($dados_js_qtd);
@@ -89,7 +121,6 @@ $json_grafico_rec = json_encode($dados_js_rec);
 <head>
   <meta charset="UTF-8">
   <title>Dashboard Comercial</title>
-  <!-- Inclui a biblioteca do Google Charts -->
   <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: "Poppins", sans-serif; }
@@ -100,6 +131,13 @@ $json_grafico_rec = json_encode($dados_js_rec);
     h1 { color: #5E3B76; font-size: 24px; }
     .btn-voltar { text-decoration: none; color: #5E3B76; font-weight: bold; border: 1px solid #5E3B76; padding: 8px 15px; border-radius: 8px; }
     .btn-voltar:hover { background: #5E3B76; color: white; }
+
+    /* FILTRO DE DATA */
+    .filter-container { background: #f7f4ff; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #CDAFFA; }
+    .filter-container form { display: flex; align-items: center; gap: 15px; }
+    .filter-container label { font-weight: 600; color: #4A2D9C; }
+    .filter-container input[type="date"] { padding: 8px; border-radius: 5px; border: 1px solid #ccc; }
+    .filter-container button { background: #4A2D9C; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
 
     /* GRIDS */
     .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 40px; }
@@ -112,21 +150,13 @@ $json_grafico_rec = json_encode($dados_js_rec);
     .config-form input { padding: 8px; border-radius: 5px; border: 1px solid #ccc; width: 100px; }
     .btn-salvar { background: #4A2D9C; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
     
-    /* GRÁFICO E RANKING */
-    .grafico-card { 
-        background: #F7F4FF; 
-        padding: 20px; 
-        border-radius: 15px; 
-        margin-bottom: 30px;
-    }
-    #chart_div, #chart_receita { height: 350px; } /* Altura padrão para os gráficos */
+    .grafico-card { background: #F7F4FF; padding: 20px; border-radius: 15px; margin-bottom: 30px; }
+    #chart_div, #chart_receita { height: 350px; } 
 
-    /* CONTROLE DE EXIBIÇÃO */
     .chart-controls { margin-bottom: 20px; display: flex; align-items: center; gap: 15px; }
     .chart-controls label { font-weight: bold; color: #5E3B76; }
     .chart-controls select { padding: 8px; border-radius: 5px; border: 1px solid #CDAFFA; }
 
-    /* TABELA RANKING */
     .ranking-section { margin-top: 30px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
@@ -139,18 +169,21 @@ $json_grafico_rec = json_encode($dados_js_rec);
   <!-- Lógica do Gráfico em JavaScript -->
   <script type="text/javascript">
     google.charts.load('current', {'packages':['corechart']});
-    google.charts.setOnLoadCallback(initializeChartDisplay); // Chamada inicial
+    google.charts.setOnLoadCallback(initializeChartDisplay); 
 
-    // Variáveis globais para os dados
     const JSON_VENDAS = <?php echo $json_grafico_qtd; ?>;
     const JSON_RECEITA = <?php echo $json_grafico_rec; ?>;
 
     function initializeChartDisplay() {
-        // Inicializa o primeiro gráfico (Vendas)
-        drawChart(JSON_VENDAS, 'chart_div', 'Sucos Vendidos', 'Qtd. Sucos', '#9661D2');
+        // Inicializa o primeiro gráfico (Vendas) e o filtro
+        drawChart(JSON_VENDAS, 'chart_div', 'Vendas (Unidades)', 'Qtd. Sucos', '#9661D2');
         
         // Esconde o gráfico de Receita no início
         document.getElementById('chart_receita_container').style.display = 'none';
+        
+        // Garante que o valor do filtro seja mantido após o refresh
+        document.getElementById('dataInicio').value = '<?php echo $data_inicio_str; ?>';
+        document.getElementById('dataFim').value = '<?php echo $data_fim_str; ?>';
     }
     
     function drawChart(jsonData, elementId, title, vAxisTitle, color) {
@@ -189,8 +222,7 @@ $json_grafico_rec = json_encode($dados_js_rec);
             vendasContainer.style.display = 'none';
             receitaContainer.style.display = 'block';
             
-            // Desenha o gráfico de receita se estiver sendo mostrado (para garantir que renderize)
-            // Chamamos a função de desenho fora do initialize para evitar sobrecarga no carregamento
+            // Desenha o gráfico de receita se estiver sendo mostrado
             drawChart(JSON_RECEITA, 'chart_receita', 'Faturamento Bruto', 'Receita (R$)', '#32CD32');
         }
     }
@@ -214,6 +246,21 @@ $json_grafico_rec = json_encode($dados_js_rec);
             <button type="submit" class="btn-salvar">Alterar</button>
         </form>
     </div>
+
+    <!-- Filtro de Datas -->
+    <div class="filter-container">
+        <form method="GET" action="dashboard_comercial.php">
+            <label for="dataInicio">De:</label>
+            <input type="date" id="dataInicio" name="data_inicio" value="<?php echo $data_inicio_str; ?>" required>
+
+            <label for="dataFim">Até:</label>
+            <input type="date" id="dataFim" name="data_fim" value="<?php echo $data_fim_str; ?>" required>
+
+            <button type="submit">Filtrar</button>
+        </form>
+        <p style="margin-top: 10px; font-size: 14px; color: #777;">Análise de: <?php echo $data_inicio->format('d/m/Y'); ?> a <?php echo $data_fim->format('d/m/Y'); ?></p>
+    </div>
+
 
     <!-- KPIs Financeiros -->
     <div class="kpi-grid">
