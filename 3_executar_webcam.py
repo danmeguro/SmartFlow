@@ -3,142 +3,137 @@ import numpy as np
 import tensorflow as tf
 import requests
 import time
-import json
-import random
 
-# --- CONFIGURAÇÕES DO MODELO ---
+# --- 1. CONFIGURAÇÕES GERAIS ---
 MODEL_PATH = 'modelo_suco.h5'
 CONFIDENCE_THRESHOLD = 0.70 
+
+# Classes (Ordem alfabética do treinamento)
 CLASSES = ['Laranja', 'Uva', 'Vazio']
 COLORS = [(0, 165, 255), (128, 0, 128), (200, 200, 200)] # Laranja, Roxo, Cinza
 
-# --- CONFIGURAÇÃO DA API LOCAL (INTEGRAÇÃO PHP) ---
-# IMPORTANTE: Ajuste esta URL conforme a pasta do seu projeto no XAMPP/WAMP
-# Baseado na sua imagem, a estrutura é SMARTFLOW/backend/atualizar_envase.php
-API_URL = 'http://localhost/SmartFlow/backend/atualizar_envase.php'
+# URL da API (Ajustada para rodar no Localhost/XAMPP)
+# Certifique-se que o Apache e MySQL do XAMPP estão ligados (botão Start)
+API_URL = 'http://localhost/SMARTFLOW/backend/atualizar_envase.php'
 
-# --- VARIÁVEIS DE CONTROLE ---
+# --- 2. VARIÁVEIS DE CONTROLE ---
 estado_atual = "Vazio"
 estado_anterior = "Vazio"
 contador_garrafas = 0
 
-print("--- INICIANDO SISTEMA SMARTFLOW ---")
-print("1. Carregando modelo IA...")
+print("--- INICIANDO SISTEMA SMARTFLOW (TCC) ---")
+
+# --- 3. CARREGAMENTO DA IA ---
+print("Carregando modelo inteligente...")
 try:
     model = tf.keras.models.load_model(MODEL_PATH)
-    print("✅ Modelo carregado com sucesso.")
+    print("✅ Cérebro da IA carregado com sucesso.")
 except Exception as e:
-    print(f"❌ ERRO CRÍTICO: Não foi possível carregar 'modelo_suco.h5'.\nErro: {e}")
+    print(f"❌ ERRO CRÍTICO: Modelo não encontrado. Detalhes: {e}")
     exit()
 
-# Função para enviar dados ao seu backend PHP
-def enviar_para_banco(sabor, contagem):
-    print(f"📡 Enviando dados para: {API_URL}")
+# --- 4. FUNÇÃO DE ENVIO PARA O BANCO DE DADOS ---
+def enviar_telemetria(sabor, contagem):
+    print(f"📡 Atualizando Dashboard... Sabor: {sabor} | Estoque: {contagem}")
     
-    # Prepara o JSON exatamente como o 'atualizar_envase.php' espera
-    # Baseado no seu arquivo PHP enviado:
+    # payload: O pacote de dados que o PHP espera receber
+    # CORREÇÃO FEITA: Valores fixos para sensores que não existem fisicamente
     payload = {
-        "pedido_id": 1,             # Pode ser dinâmico no futuro
-        "rotuladora_presenca": 1,   # 1 = Detectou garrafa
-        "estoque_contagem": contagem,
-        "carrossel_posicao": random.randint(1, 360), # Simulação de sensor
-        "tampinhas_disponiveis": 1, # 1 = OK
-        "tempo_envase_ms": random.randint(2800, 3500) # Simulação de tempo (ms)
+        "pedido_id": 1,             # ID do pedido ativo
+        "rotuladora_presenca": 1,   # 1 = Sensor OK
+        "estoque_contagem": contagem, # <--- DADO REAL (Vindo da Câmera)
+        "carrossel_posicao": 0,     # FIXO em 0 (Para não oscilar na tela)
+        "tampinhas_disponiveis": 1, # 1 = Tem tampinhas (Status OK)
+        "tempo_envase_ms": 3000     # Tempo fixo de 3 segundos
     }
 
     try:
-        # Envia a requisição POST para o servidor local
         response = requests.post(API_URL, json=payload, timeout=2)
-        
         if response.status_code == 200:
-            # O PHP retorna JSON com { success: true/false }
-            print(f"✅ SUCESSO! Banco Atualizado. Retorno do PHP: {response.text}")
+            print(f"✅ Banco de Dados Atualizado!")
         else:
-            print(f"⚠️ ERRO HTTP {response.status_code}: Verifique se o caminho do arquivo PHP está correto.")
-            
+            print(f"⚠️ Erro no PHP (Status {response.status_code})")
     except requests.exceptions.ConnectionError:
-        print(f"❌ ERRO DE CONEXÃO: O servidor local (Apache/XAMPP) está ligado? Não consegui acessar {API_URL}")
+        print(f"❌ Erro de Conexão: O XAMPP/Servidor está ligado?")
     except Exception as e:
-        print(f"❌ Erro genérico ao enviar: {e}")
+        print(f"❌ Erro genérico: {e}")
 
-# --- INÍCIO DA WEBCAM ---
-print("2. Abrindo Webcam...")
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW) # Tenta DirectShow para Windows
+# --- 5. INICIALIZAÇÃO DA CÂMERA ---
+print("Abrindo Webcam...")
+# Tenta usar DirectShow (melhor para Windows)
+cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 if not cap.isOpened():
     cap = cv2.VideoCapture(0)
 
+# Loop Principal (Roda a cada frame de vídeo)
 while True:
     ret, frame = cap.read()
     if not ret:
-        print("Erro na captura da câmera.")
+        print("Falha na captura de vídeo.")
         break
 
-    # --- 1. PROCESSAMENTO DE IMAGEM (Visão) ---
-    # Redimensiona
+    # --- A. PRÉ-PROCESSAMENTO (Visão) ---
+    # 1. Redimensiona para 224x224 (Padrão MobileNet)
     img_small = cv2.resize(frame, (224, 224))
     
-    # CORREÇÃO DE COR (Fundamental para Laranja funcionar)
+    # 2. Converte BGR para RGB (CORREÇÃO CRUCIAL PARA A LARANJA)
     img_rgb = cv2.cvtColor(img_small, cv2.COLOR_BGR2RGB)
     
-    # Prepara para a IA
+    # 3. Prepara array para o TensorFlow
     img_array = np.array(img_rgb, dtype=np.float32)
     img_array = np.expand_dims(img_array, axis=0)
     img_input = tf.keras.applications.mobilenet_v2.preprocess_input(img_array)
 
-    # Predição
+    # --- B. PREDIÇÃO (O Cérebro pensa) ---
     preds = model.predict(img_input, verbose=0)
-    idx = np.argmax(preds)
-    confidence = preds[0][idx]
-    label = CLASSES[idx]
+    idx = np.argmax(preds)      # Qual índice ganhou?
+    confidence = preds[0][idx]  # Qual a certeza?
+    label = CLASSES[idx]        # Nome da classe
 
-    # --- 2. LÓGICA DE NEGÓCIO (Máquina de Estados) ---
+    # --- C. LÓGICA DE NEGÓCIO (Máquina de Estados) ---
     
-    # Filtro de confiança para evitar "piscar"
+    # Filtra incertezas
     if confidence >= CONFIDENCE_THRESHOLD:
         novo_estado = label
     else:
-        novo_estado = estado_atual # Mantém o anterior se tiver dúvida
-        
-    # DETECÇÃO DE BORDA DE SUBIDA (O momento exato que a garrafa entra)
-    # Lógica: Estava "Vazio" -> Agora é "Laranja" ou "Uva"
+        novo_estado = estado_atual # Mantém o anterior na dúvida
+
+    # DETECÇÃO DE BORDA DE SUBIDA (O momento que a garrafa entra)
+    # Regra: Se estava "Vazio" e mudou para "Suco", conta +1
     if estado_anterior == "Vazio" and novo_estado in ["Laranja", "Uva"]:
         contador_garrafas += 1
-        print(f"\n--- 🍾 NOVA GARRAFA DETECTADA: {novo_estado.upper()} (#{contador_garrafas}) ---")
-        
-        # Envia para o PHP/MySQL
-        enviar_para_banco(novo_estado, contador_garrafas)
-        
-        # Pequeno delay para evitar envio duplicado no mesmo segundo
-        # time.sleep(0.5) 
-
+        # Envia para o site
+        enviar_telemetria(novo_estado, contador_garrafas)
+    
+    # Atualiza memória para o próximo frame
     estado_atual = novo_estado
     estado_anterior = estado_atual
 
-    # --- 3. INTERFACE GRÁFICA (Display) ---
+    # --- D. EXIBIÇÃO NA TELA (Interface) ---
     
     if confidence >= CONFIDENCE_THRESHOLD:
         if label == 'Vazio':
+            # Visual discreto para quando não tem nada
             msg = "Aguardando garrafa..."
-            cor_box = (200, 200, 200) # Cinza
-            cor_txt = (50, 50, 50)
+            cv2.rectangle(frame, (0, 0), (frame.shape[1], 60), (200, 200, 200), -1) # Cinza
+            cv2.putText(frame, msg, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50, 50, 50), 2)
         else:
+            # Visual colorido para detecção
             msg = f"{label.upper()}: {confidence*100:.1f}% | Total: {contador_garrafas}"
-            cor_box = COLORS[idx]
-            cor_txt = (255, 255, 255)
-            
-        # Desenha barra e texto
-        cv2.rectangle(frame, (0, 0), (frame.shape[1], 60), cor_box, -1)
-        cv2.putText(frame, msg, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, cor_txt, 2)
-    
+            cor = COLORS[idx]
+            cv2.rectangle(frame, (0, 0), (frame.shape[1], 60), cor, -1)
+            cv2.putText(frame, msg, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     else:
-        # Modo Incerteza
+        # Visual de Incerteza
         cv2.rectangle(frame, (0, 0), (frame.shape[1], 60), (50, 50, 50), -1)
-        cv2.putText(frame, "Analisando...", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,255), 2)
+        cv2.putText(frame, "Analisando...", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-    cv2.imshow('SmartFlow - Monitoramento', frame)
+    # Mostra a janela
+    cv2.imshow('SmartFlow - Monitoramento TCC', frame)
 
-    # Fechar com 'q' ou botão X
-    if (cv2.waitKey(1) & 0xFF == ord('q')) or (cv2.getWindowProperty('SmartFlow - Monitoramento', cv2.WND_PROP_VISIBLE) < 1):
+    # --- E. SAÍDA ---
+    # Fecha com a tecla 'q' ou clicando no 'X' da janela
+    if (cv2.waitKey(1) & 0xFF == ord('q')) or (cv2.getWindowProperty('SmartFlow - Monitoramento TCC', cv2.WND_PROP_VISIBLE) < 1):
         break
 
 cap.release()
