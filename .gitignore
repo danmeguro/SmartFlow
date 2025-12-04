@@ -408,3 +408,14 @@ __pycache__/
 # Ignora arquivos de modelo (geralmente grandes)
 *.h5
 *.onnx
+
+# Ignorar arquivos de vídeo pesados
+*.mp4
+*.avi
+
+# Ignorar pastas de dataset (muitas imagens)
+machinelearning/data_suco/
+
+# Ignorar arquivos temporários do python
+__pycache__/
+*.h5
