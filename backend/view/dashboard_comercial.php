@@ -26,20 +26,20 @@ $sql_conf = "SELECT valor FROM configuracoes WHERE chave = 'preco_suco'";
 $res_conf = $conn->query($sql_conf);
 $preco_suco = ($res_conf && $res_conf->num_rows > 0) ? floatval($res_conf->fetch_assoc()['valor']) : 10.00;
 
-// --- 1. LÓGICA DO FILTRO DE DATAS ---
+// --- 1. LÓGICA DO FILTRO DE DATAS E PERIODICIDADE ---
 // Pega as datas do GET ou define um período padrão (últimos 15 dias)
 $data_inicio_str = $_GET['data_inicio'] ?? (new DateTime())->sub(new DateInterval("P14D"))->format('Y-m-d');
 $data_fim_str = $_GET['data_fim'] ?? (new DateTime())->format('Y-m-d');
+$periodo_tipo = $_GET['periodo'] ?? 'dia'; // 'dia', 'mes', 'ano'
 
 // Validação básica e formatação de objetos DateTime
 try {
     $data_inicio = new DateTime($data_inicio_str);
     $data_fim = new DateTime($data_fim_str);
     if ($data_inicio > $data_fim) {
-        $data_inicio = new DateTime($data_fim_str); // Garante que inicio não seja maior que fim
+        $data_inicio = new DateTime($data_fim_str);
     }
 } catch (Exception $e) {
-    // Fallback em caso de datas inválidas
     $data_inicio = (new DateTime())->sub(new DateInterval("P14D"));
     $data_fim = new DateTime();
 }
@@ -47,8 +47,39 @@ $data_inicio_sql = $data_inicio->format('Y-m-d');
 $data_fim_sql = $data_fim->format('Y-m-d');
 
 
-// --- CÁLCULOS PRINCIPAIS (KPIs - Afetados pela data) ---
-// Calcula o faturamento e quantidade apenas no período selecionado
+// --- DEFINIÇÕES PARA AGRUPAMENTO SQL E FORMATO DE EXIBIÇÃO ---
+$label_eixo_x = 'Dia';
+$formato_eixo_x = 'string'; // Padrão
+$sql_agrupamento = "DATE(p.data_pedido)";
+$php_formato = 'd/m';
+$vazio_formato = 'Y-m-d';
+
+switch ($periodo_tipo) {
+    case 'mes':
+        $sql_agrupamento = "DATE_FORMAT(p.data_pedido, '%Y-%m')";
+        $php_formato = 'm/Y';
+        $vazio_formato = 'Y-m';
+        $label_eixo_x = 'Mês/Ano';
+        break;
+    case 'ano':
+        $sql_agrupamento = "DATE_FORMAT(p.data_pedido, '%Y')";
+        $php_formato = 'Y';
+        $vazio_formato = 'Y';
+        $label_eixo_x = 'Ano';
+        // AQUI ESTÁ A CORREÇÃO PRINCIPAL: Se for 'ano', tratamos como número para formatar como inteiro.
+        $formato_eixo_x = 'number'; 
+        break;
+    case 'dia':
+    default:
+        $sql_agrupamento = "DATE(p.data_pedido)";
+        $php_formato = 'd/m';
+        $vazio_formato = 'Y-m-d';
+        $label_eixo_x = 'Dia';
+        break;
+}
+
+
+// --- CÁLCULOS PRINCIPAIS (KPIs) ---
 $sql_vendas_periodo = "
     SELECT 
         SUM(i.quantidade) as total_sucos, 
@@ -68,52 +99,68 @@ $ticket_medio = ($total_pedidos > 0) ? ($faturamento_total / $total_pedidos) : 0
 $sql_ranking = "SELECT sabor, SUM(quantidade) as qtd FROM itens_pedido GROUP BY sabor ORDER BY qtd DESC";
 $res_ranking = $conn->query($sql_ranking);
 
-// --- 2. LÓGICA DE GERAÇÃO DE DADOS PARA GRÁFICO ---
+// --- 2. LÓGICA DE GERAÇÃO DE DADOS PARA GRÁFICO (Gap Filling e Agrupamento) ---
 $datas_grafico_qtd = [];
 $datas_grafico_rec = [];
 
 // A. Gerar Array de Datas para o período selecionado (Gap Filling)
-$interval = new DateInterval('P1D');
-$periodo = new DatePeriod($data_inicio, $interval, $data_fim->modify('+1 day'));
-$data_fim->modify('-1 day'); // Volta para o dia final correto
+$data_atual = clone $data_inicio;
+$data_final_ajustada = clone $data_fim;
+$data_final_ajustada->modify('+1 day'); // Inclui o dia final
 
-foreach ($periodo as $data) {
-    $datas_grafico_qtd[$data->format('Y-m-d')] = 0; 
-    $datas_grafico_rec[$data->format('Y-m-d')] = 0; 
+while ($data_atual < $data_final_ajustada) {
+    $chave = $data_atual->format($vazio_formato);
+    $datas_grafico_qtd[$chave] = 0; 
+    $datas_grafico_rec[$chave] = 0; 
+
+    // Avança a data baseada no tipo de período
+    if ($periodo_tipo === 'mes') {
+        $data_atual->modify('+1 month');
+    } elseif ($periodo_tipo === 'ano') {
+        $data_atual->modify('+1 year');
+    } else {
+        $data_atual->modify('+1 day');
+    }
 }
 
-// B. Consulta SQL para buscar vendas por dia
+// B. Consulta SQL para buscar vendas por período
 $sql_grafico = "
     SELECT 
-        DATE(p.data_pedido) as dia, 
+        {$sql_agrupamento} as periodo, 
         SUM(i.quantidade) as sucos_vendidos,
         SUM(i.quantidade * {$preco_suco}) as receita
     FROM pedidos p
     JOIN itens_pedido i ON p.id = i.pedido_id
     WHERE DATE(p.data_pedido) BETWEEN '{$data_inicio_sql}' AND '{$data_fim_sql}'
-    GROUP BY dia
-    ORDER BY dia ASC
+    GROUP BY periodo
+    ORDER BY periodo ASC
 ";
 $res_grafico = $conn->query($sql_grafico);
 
-// C. Popular os Arrays de Datas
+// C. Popular os Arrays de Datas com os resultados do SQL
 if ($res_grafico) {
     while ($row = $res_grafico->fetch_assoc()) {
-        $data_sql = $row['dia'];
-        if (isset($datas_grafico_qtd[$data_sql])) {
-            $datas_grafico_qtd[$data_sql] = intval($row['sucos_vendidos']);
-            $datas_grafico_rec[$data_sql] = floatval($row['receita']);
+        $chave_sql = $row['periodo'];
+        if (isset($datas_grafico_qtd[$chave_sql])) {
+            $datas_grafico_qtd[$chave_sql] = intval($row['sucos_vendidos']);
+            $datas_grafico_rec[$chave_sql] = floatval($row['receita']);
         }
     }
 }
 
 // D. Formatação para JSON/JavaScript
-$dados_js_qtd = [['Dia', 'Sucos Vendidos']];
-foreach ($datas_grafico_qtd as $dia_full => $qtd) { $dados_js_qtd[] = [(new DateTime($dia_full))->format('d/m'), $qtd]; }
+$dados_js_qtd = [['Período', 'Sucos Vendidos']];
+foreach ($datas_grafico_qtd as $chave => $qtd) { 
+    $label = ($periodo_tipo === 'dia' || $periodo_tipo === 'mes') ? (new DateTime($chave))->format($php_formato) : intval($chave);
+    $dados_js_qtd[] = [$label, $qtd]; 
+}
 $json_grafico_qtd = json_encode($dados_js_qtd);
 
-$dados_js_rec = [['Dia', 'Faturamento (R$)']];
-foreach ($datas_grafico_rec as $dia_full => $rec) { $dados_js_rec[] = [(new DateTime($dia_full))->format('d/m'), $rec]; }
+$dados_js_rec = [['Período', 'Faturamento (R$)']];
+foreach ($datas_grafico_rec as $chave => $rec) { 
+    $label = ($periodo_tipo === 'dia' || $periodo_tipo === 'mes') ? (new DateTime($chave))->format($php_formato) : intval($chave);
+    $dados_js_rec[] = [$label, $rec]; 
+}
 $json_grafico_rec = json_encode($dados_js_rec);
 ?>
 <!DOCTYPE html>
@@ -134,9 +181,9 @@ $json_grafico_rec = json_encode($dados_js_rec);
 
     /* FILTRO DE DATA */
     .filter-container { background: #f7f4ff; padding: 15px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #CDAFFA; }
-    .filter-container form { display: flex; align-items: center; gap: 15px; }
+    .filter-container form { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
     .filter-container label { font-weight: 600; color: #4A2D9C; }
-    .filter-container input[type="date"] { padding: 8px; border-radius: 5px; border: 1px solid #ccc; }
+    .filter-container input[type="date"], .filter-container select { padding: 8px; border-radius: 5px; border: 1px solid #ccc; }
     .filter-container button { background: #4A2D9C; color: white; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; }
 
     /* GRIDS */
@@ -173,6 +220,8 @@ $json_grafico_rec = json_encode($dados_js_rec);
 
     const JSON_VENDAS = <?php echo $json_grafico_qtd; ?>;
     const JSON_RECEITA = <?php echo $json_grafico_rec; ?>;
+    // VARIÁVEL COM O TIPO DE FORMATO DO EIXO X (CORREÇÃO)
+    const EIXO_X_TIPO = '<?php echo $formato_eixo_x; ?>'; 
 
     function initializeChartDisplay() {
         // Inicializa o primeiro gráfico (Vendas) e o filtro
@@ -182,8 +231,9 @@ $json_grafico_rec = json_encode($dados_js_rec);
         document.getElementById('chart_receita_container').style.display = 'none';
         
         // Garante que o valor do filtro seja mantido após o refresh
-        document.getElementById('dataInicio').value = '<?php echo $data_inicio_str; ?>';
-        document.getElementById('dataFim').value = '<?php echo $data_fim_str; ?>';
+        document.getElementById('dataInicio').value = '<?php echo $data_inicio_sql; ?>';
+        document.getElementById('dataFim').value = '<?php echo $data_fim_sql; ?>';
+        document.getElementById('periodo').value = '<?php echo $periodo_tipo; ?>';
     }
     
     function drawChart(jsonData, elementId, title, vAxisTitle, color) {
@@ -196,7 +246,16 @@ $json_grafico_rec = json_encode($dados_js_rec);
         pointSize: 5,
         legend: { position: 'bottom' },
         colors: [color],
-        hAxis: { title: 'Data', titleTextStyle: { color: '#333' } },
+        hAxis: { 
+            title: 'Período', 
+            titleTextStyle: { color: '#333' },
+            // CORREÇÃO: Define o tipo do eixo X (string para dia/mês, number para ano)
+            format: EIXO_X_TIPO === 'number' ? '0' : '',
+            viewWindow: {
+                min: EIXO_X_TIPO === 'number' ? null : null, // Mantém rótulos inteiros se for número
+                max: EIXO_X_TIPO === 'number' ? null : null
+            }
+        },
         vAxis: { title: vAxisTitle, minValue: 0, format: '0' }
       };
       
@@ -247,18 +306,25 @@ $json_grafico_rec = json_encode($dados_js_rec);
         </form>
     </div>
 
-    <!-- Filtro de Datas -->
+    <!-- Filtro de Datas e Período -->
     <div class="filter-container">
         <form method="GET" action="dashboard_comercial.php">
+            <label for="periodo">Agrupar por:</label>
+            <select id="periodo" name="periodo" required>
+                <option value="dia" <?php if ($periodo_tipo == 'dia') echo 'selected'; ?>>Dia</option>
+                <option value="mes" <?php if ($periodo_tipo == 'mes') echo 'selected'; ?>>Mês</option>
+                <option value="ano" <?php if ($periodo_tipo == 'ano') echo 'selected'; ?>>Ano</option>
+            </select>
+        
             <label for="dataInicio">De:</label>
-            <input type="date" id="dataInicio" name="data_inicio" value="<?php echo $data_inicio_str; ?>" required>
+            <input type="date" id="dataInicio" name="data_inicio" value="<?php echo $data_inicio_sql; ?>" required>
 
             <label for="dataFim">Até:</label>
-            <input type="date" id="dataFim" name="data_fim" value="<?php echo $data_fim_str; ?>" required>
+            <input type="date" id="dataFim" name="data_fim" value="<?php echo $data_fim_sql; ?>" required>
 
             <button type="submit">Filtrar</button>
         </form>
-        <p style="margin-top: 10px; font-size: 14px; color: #777;">Análise de: <?php echo $data_inicio->format('d/m/Y'); ?> a <?php echo $data_fim->format('d/m/Y'); ?></p>
+        <p style="margin-top: 10px; font-size: 14px; color: #777;">Período Selecionado: <?php echo $data_inicio->format('d/m/Y'); ?> a <?php echo $data_fim->format('d/m/Y'); ?></p>
     </div>
 
 
@@ -289,7 +355,7 @@ $json_grafico_rec = json_encode($dados_js_rec);
     <div class="grafico-card">
         <h2>Análise de Tendência</h2>
 
-        <!-- CONTROLE DROPDOWN -->
+        <!-- CONTROLE DROPDOWN DE GRÁFICO -->
         <div class="chart-controls">
             <label for="chartSelector">Visualizar:</label>
             <select id="chartSelector" onchange="toggleChart()">
