@@ -3,31 +3,28 @@
 session_start();
 require_once 'conexao.php';
 
+// Se falhar, volta para a tela de login na pasta view
 $url_falha = 'view/index.php?erro=1';
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $email = $_POST['email'] ?? '';
     $senha = $_POST['password'] ?? ''; 
 
-    // --- 1. BYPASS LOCAL (Garante acesso imediato) ---
+    // --- 1. VERIFICAÇÃO LOCAL (Hardcoded para Teste) ---
     if ($email === 'cliente@smartflow.com' && $senha === 'cliente123') {
         $_SESSION['loggedin'] = true;
-        $_SESSION['id'] = 1;
-        $_SESSION['email'] = $email;
         $_SESSION['papel'] = 'cliente';
         header("location: view/menu_suco.php");
         exit;
     }
     if ($email === 'admin@smartflow.com' && $senha === 'admin123') {
         $_SESSION['loggedin'] = true;
-        $_SESSION['id'] = 2;
-        $_SESSION['email'] = $email;
         $_SESSION['papel'] = 'administrador';
-        header("location: view/home_admin.php"); // Vai para o menu intermediário
+        header("location: view/home_admin.php");
         exit;
     }
 
-    // --- 2. VERIFICAÇÃO NO BANCO ---
+    // --- 2. VERIFICAÇÃO NO BANCO DE DADOS (Fallback) ---
     $email_db = $conn->real_escape_string($email);
     $sql = "SELECT id, email, senha_hash, papel FROM usuarios WHERE email = ?";
     
@@ -39,7 +36,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         if ($res->num_rows === 1) {
             $user = $res->fetch_assoc();
             
-            // Aceita Hash ou Texto Puro
+            // Aceita Hash OU Texto Puro (para desenvolvimento)
             if (password_verify($senha, $user['senha_hash']) || $senha === $user['senha_hash']) {
                 $_SESSION['loggedin'] = true;
                 $_SESSION['id'] = $user['id'];
@@ -64,4 +61,3 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 }
 header("location: " . $url_falha);
 exit;
-?>

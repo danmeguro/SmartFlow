@@ -1,6 +1,7 @@
 <?php
-// SmartFlow/backend/view/home_admin.php
+// backend/view/home_admin.php
 session_start();
+// Protege a rota, garantindo que apenas o admin acesse este menu
 if (!isset($_SESSION['loggedin']) || $_SESSION['papel'] !== 'administrador') {
     header("location: index.php");
     exit;
@@ -95,7 +96,7 @@ if (!isset($_SESSION['loggedin']) || $_SESSION['papel'] !== 'administrador') {
                 Painel Sensores
             </a>
 
-            <!-- Botão 3: Comercial (NOVO) -->
+            <!-- Botão 3: Dashboard Comercial -->
             <a href="dashboard_comercial.php" class="menu-btn">
                 <span>💰</span>
                 Dash. Comercial
