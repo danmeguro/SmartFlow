@@ -21,31 +21,24 @@
 <body>
     <div class="login-container">
         <h2>SmartFlow Login</h2>
-        
         <?php if (isset($_GET['erro'])): ?>
-            <p class="erro-msg">
-                <?php 
-                if ($_GET['erro'] == 'usuario') echo "Usuário não encontrado.";
-                if ($_GET['erro'] == 'senha') echo "Senha incorreta.";
-                if ($_GET['erro'] == '1') echo "Erro ao processar login.";
-                ?>
-            </p>
+            <p class="erro-msg">Erro de acesso. Verifique senha/usuário.</p>
         <?php endif; ?>
 
         <form action="../login.php" method="POST">
             <div class="input-group">
-                <label for="email">E-mail</label>
-                <input type="email" id="email" name="email" required placeholder="Digite seu e-mail">
+                <label>E-mail</label>
+                <input type="email" name="email" required placeholder="Digite seu e-mail">
             </div>
             <div class="input-group">
-                <label for="password">Senha</label>
-                <input type="password" id="password" name="password" required placeholder="Digite sua senha">
+                <label>Senha</label>
+                <input type="password" name="password" required placeholder="Digite sua senha">
             </div>
             <button type="submit" class="btn-login">Entrar</button>
         </form>
         
         <div class="teste-info">
-            <p><strong>Teste:</strong></p>
+            <p><strong>Acesso Rápido:</strong></p>
             <p>Cliente: cliente@smartflow.com / cliente123</p>
             <p>Admin: admin@smartflow.com / admin123</p>
         </div>

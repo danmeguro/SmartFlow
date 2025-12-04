@@ -29,7 +29,7 @@ if (!isset($_SESSION['loggedin']) || $_SESSION['papel'] !== 'administrador') {
             padding: 40px;
             border-radius: 20px;
             box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-            max-width: 600px;
+            max-width: 800px;
             width: 90%;
         }
 
@@ -37,7 +37,7 @@ if (!isset($_SESSION['loggedin']) || $_SESSION['papel'] !== 'administrador') {
         
         .menu-grid {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
         }
 
@@ -49,13 +49,14 @@ if (!isset($_SESSION['loggedin']) || $_SESSION['papel'] !== 'administrador') {
             text-decoration: none;
             color: #4A2D9C;
             font-weight: bold;
-            font-size: 18px;
+            font-size: 16px;
             transition: 0.3s;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             gap: 10px;
+            height: 150px;
         }
 
         .menu-btn:hover {
@@ -82,16 +83,22 @@ if (!isset($_SESSION['loggedin']) || $_SESSION['papel'] !== 'administrador') {
         <h1>Área Administrativa</h1>
         
         <div class="menu-grid">
-            <!-- Botão 1: RENOMEADO -->
+            <!-- Botão 1: Gestão de Pedidos -->
             <a href="gestao_pedidos.php" class="menu-btn">
                 <span>📋</span>
                 Gestão de Pedidos
             </a>
 
-            <!-- Botão 2: Mantido -->
+            <!-- Botão 2: Telemetria -->
             <a href="telemetria.php" class="menu-btn">
                 <span>📡</span>
-                Painel de Controle (Sensores)
+                Painel Sensores
+            </a>
+
+            <!-- Botão 3: Comercial (NOVO) -->
+            <a href="dashboard_comercial.php" class="menu-btn">
+                <span>💰</span>
+                Dash. Comercial
             </a>
         </div>
 

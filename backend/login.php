@@ -3,17 +3,13 @@
 session_start();
 require_once 'conexao.php';
 
-// Se falhar, volta para a tela de login na pasta view
 $url_falha = 'view/index.php?erro=1';
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
-    $email = $conn->real_escape_string($_POST['email'] ?? '');
+    $email = $_POST['email'] ?? '';
     $senha = $_POST['password'] ?? ''; 
 
-    // --- 1. VERIFICAÇÃO LOCAL (HARDCODED) ---
-    // Bypass para garantir acesso imediato aos usuários de teste
-    
-    // Caso: Cliente Teste
+    // --- 1. BYPASS LOCAL (Garante acesso imediato) ---
     if ($email === 'cliente@smartflow.com' && $senha === 'cliente123') {
         $_SESSION['loggedin'] = true;
         $_SESSION['id'] = 1;
@@ -22,24 +18,21 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         header("location: view/menu_suco.php");
         exit;
     }
-
-    // Caso: Admin Teste
     if ($email === 'admin@smartflow.com' && $senha === 'admin123') {
         $_SESSION['loggedin'] = true;
         $_SESSION['id'] = 2;
         $_SESSION['email'] = $email;
         $_SESSION['papel'] = 'administrador';
-        
-        // MUDANÇA AQUI: Vai para o Menu Intermediário
-        header("location: view/home_admin.php");
+        header("location: view/home_admin.php"); // Vai para o menu intermediário
         exit;
     }
 
-    // --- 2. VERIFICAÇÃO NO BANCO DE DADOS ---
+    // --- 2. VERIFICAÇÃO NO BANCO ---
+    $email_db = $conn->real_escape_string($email);
     $sql = "SELECT id, email, senha_hash, papel FROM usuarios WHERE email = ?";
     
     if ($stmt = $conn->prepare($sql)) {
-        $stmt->bind_param("s", $email);
+        $stmt->bind_param("s", $email_db);
         $stmt->execute();
         $res = $stmt->get_result();
 
@@ -54,7 +47,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 $_SESSION['papel'] = $user['papel'];
                 
                 if ($user['papel'] === 'administrador') {
-                    // MUDANÇA AQUI TAMBÉM
                     header("location: view/home_admin.php"); 
                 } else {
                     header("location: view/menu_suco.php"); 
